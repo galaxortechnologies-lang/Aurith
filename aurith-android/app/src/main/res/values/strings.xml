@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">AURITH</string>
+    <string name="developer_name">Anup Chand</string>
+    <string name="app_tagline">Your Personal AI Assistant</string>
+    <string name="created_by">CREATED BY ANUP CHAND</string>
+    <string name="notification_service_label">AURITH Notification Center Listener</string>
+</resources>

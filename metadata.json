@@ -1,0 +1,6 @@
+{
+  "name": "AURITH - Native Android Personal AI Assistant",
+  "description": "AURITH: Native Android personal AI assistant by Anup Chand with OpenRouter (Gemma 4 26B) and Fish Audio TTS, Jetpack Compose UI, phone control tools, and offline device intelligence.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
