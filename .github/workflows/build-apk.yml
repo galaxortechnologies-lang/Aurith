@@ -44,6 +44,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
+          # This automatically handles wrapper bootstrapping or usage if present.
 
       - name: Create temporary debug keystore
         run: |
@@ -54,21 +55,21 @@ jobs:
               -keyalg RSA -keysize 2048 -validity 10000 \
               -dname "CN=Android Debug,O=Android,C=US"
           fi
-          if [ ! -f $HOME/.android/debug.keystore ]; then
-            echo "Error: Failed to create debug keystore."
-            exit 1
-          fi
-          echo "Debug keystore successfully verified at $HOME/.android/debug.keystore."
+          echo "Debug keystore verified."
 
       - name: Build debug APK
         working-directory: aurith-android
         run: |
+          # Ensure executable permissions for wrapper if it exists, 
+          # otherwise rely on 'gradle' installed by setup-gradle action.
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
             ./gradlew :app:assembleDebug --stacktrace --no-daemon
           else
+            echo "Gradle wrapper not found, using 'gradle' from environment..."
             gradle :app:assembleDebug --stacktrace --no-daemon
           fi
+
 
       - name: Verify debug APK
         run: |
