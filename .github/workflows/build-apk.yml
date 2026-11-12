@@ -60,15 +60,12 @@ jobs:
       - name: Build debug APK
         working-directory: aurith-android
         run: |
-          # Ensure executable permissions for wrapper if it exists, 
-          # otherwise rely on 'gradle' installed by setup-gradle action.
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew :app:assembleDebug --stacktrace --no-daemon
-          else
-            echo "Gradle wrapper not found, using 'gradle' from environment..."
-            gradle :app:assembleDebug --stacktrace --no-daemon
+          if [ ! -f "./gradlew" ]; then
+            echo "Gradle wrapper not found, generating wrapper with Gradle 8.10.2..."
+            gradle wrapper --gradle-version 8.10.2 --distribution-type bin
           fi
+          chmod +x ./gradlew
+          ./gradlew :app:clean :app:assembleDebug --stacktrace --no-daemon
 
 
       - name: Verify debug APK

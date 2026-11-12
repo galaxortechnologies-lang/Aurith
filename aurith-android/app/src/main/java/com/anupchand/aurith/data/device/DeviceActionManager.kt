@@ -127,7 +127,7 @@ class DeviceActionManager(private val context: Context) {
             )
 
             val queryLower = appName.trim().lowercase()
-            for ((key, pkg) to knownPackages) {
+            for ((key, pkg) in knownPackages) {
                 if (queryLower.contains(key)) {
                     if (isPackageInstalled(pm, pkg)) {
                         targetPackage = pkg
