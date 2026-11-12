@@ -103,6 +103,7 @@ export interface DeviceTelemetry {
 export type TtsEngine = 'lifetime_free_device' | 'lifetime_free_google' | 'fish_audio';
 export type MicSoundMode = 'disabled' | 'subtle' | 'default';
 export type VoiceGender = 'male' | 'female' | 'auto';
+export type VoiceProfile = 'natural' | 'energetic' | 'calm';
 
 export interface ApiSettings {
   openRouterApiKey: string;
@@ -116,6 +117,7 @@ export interface ApiSettings {
   speechRate: number;
   speechPitch: number;
   voiceGender: VoiceGender;
+  voiceProfile: VoiceProfile;
   selectedLanguage: SupportedLanguage;
   memoryEnabled: boolean;
   autoSpeakReplies: boolean;

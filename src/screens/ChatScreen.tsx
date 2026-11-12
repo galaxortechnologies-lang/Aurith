@@ -20,6 +20,7 @@ import { executeDeviceAction } from '../services/deviceActions';
 import { ttsService } from '../services/ttsService';
 import { getStoredMemories } from '../services/storage';
 import { detectVoiceAppLaunch } from '../services/appLauncher';
+import { friendshipLogic } from '../services/friendshipLogic';
 
 interface ChatScreenProps {
   conversation: Conversation;
@@ -97,6 +98,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
 
     setInputText('');
     setErrorMsg(null);
+    friendshipLogic.trackUserInteraction(text);
 
     const userMessage: ChatMessage = {
       id: `msg-${Date.now()}`,

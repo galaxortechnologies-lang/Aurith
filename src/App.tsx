@@ -7,6 +7,7 @@ import {
   saveConversations,
 } from './services/storage';
 import { downloadAndroidProjectZip } from './services/exportZip';
+import { wakeWordService } from './services/wakeWord';
 import { PhoneFrame } from './components/PhoneFrame';
 import { CodeExplorerModal } from './components/CodeExplorerModal';
 import { ActionConfirmModal } from './components/ActionConfirmModal';
@@ -38,6 +39,16 @@ export default function App() {
   const [activeConvId, setActiveConvId] = useState<string>(
     conversations[0]?.id || 'default-conv'
   );
+
+  useEffect(() => {
+    // Start wake word engine ("aw-rith")
+    wakeWordService.start(() => {
+      setCurrentScreen('voice');
+    });
+    return () => {
+      wakeWordService.stop();
+    };
+  }, []);
 
   const [isCodeExplorerOpen, setIsCodeExplorerOpen] = useState(false);
   const [confirmModal, setConfirmModal] = useState<{
@@ -144,6 +155,7 @@ export default function App() {
             onNavigate={setCurrentScreen}
             settings={settings}
             onUpdateLanguage={handleUpdateLanguage}
+            onUpdateSettings={setSettings}
             onRequestConfirmAction={handleRequestConfirmAction}
           />
         )}

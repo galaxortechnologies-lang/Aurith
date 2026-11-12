@@ -22,8 +22,9 @@ const DEFAULT_SETTINGS: ApiSettings = {
   ttsEndpoint: 'https://api.fish.audio/v1/tts',
   micSoundMode: 'disabled',
   speechRate: 1.0,
-  speechPitch: 0.92, // Natural male pitch depth
+  speechPitch: 0.50, // Deep testosterone male pitch depth
   voiceGender: 'male',
+  voiceProfile: 'natural',
   selectedLanguage: 'hinglish',
   memoryEnabled: true,
   autoSpeakReplies: true,

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { ScreenId } from '../types';
 import {
   ArrowLeft,
@@ -16,8 +16,10 @@ import {
   RefreshCw,
   Activity,
   Zap,
+  AlertTriangle,
 } from 'lucide-react';
 import { useDeviceTelemetry } from '../hooks/useDeviceTelemetry';
+import { batteryMonitor, BatteryRecommendation } from '../services/batteryMonitor';
 
 interface DeviceScreenProps {
   onNavigate: (screen: ScreenId) => void;
@@ -124,6 +126,63 @@ export const DeviceScreen: React.FC<DeviceScreenProps> = ({ onNavigate }) => {
           <span>Health: {telemetry.batteryHealth}</span>
           <span>Voltage: {telemetry.isCharging ? '4.25 V' : '3.88 V'}</span>
         </div>
+      </div>
+
+      {/* Background Battery Usage Monitor & Latency Spike Optimizer */}
+      <div className="p-4 rounded-2xl bg-[#09152B] border border-cyan-500/30 space-y-3 shadow-lg">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-cyan-400">
+            <Zap className="w-4 h-4 text-amber-400" />
+            <span className="text-xs font-mono font-bold uppercase tracking-wider">
+              Background Battery Usage Monitor
+            </span>
+          </div>
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-500/30">
+            Active Watcher
+          </span>
+        </div>
+
+        <div className="flex items-center justify-between text-xs text-slate-300 bg-[#050C18] p-2.5 rounded-xl border border-slate-800">
+          <span>Last AI Processing Latency:</span>
+          <span className={`font-mono font-bold ${batteryMonitor.getLastLatency() > 2000 ? 'text-amber-400' : 'text-emerald-400'}`}>
+            {batteryMonitor.getLastLatency() > 0 ? `${(batteryMonitor.getLastLatency() / 1000).toFixed(2)}s` : 'Optimal (<1.2s)'}
+          </span>
+        </div>
+
+        {batteryMonitor.getLastLatency() > 2000 ? (
+          <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2">
+            <div className="flex items-center gap-2 text-amber-300 text-xs font-bold">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>Latency Spike Detected (&gt;2.0s)</span>
+            </div>
+            <p className="text-[11px] text-slate-300 leading-relaxed">
+              Power-intensive background tasks are causing thermal throttling. The battery usage monitor recommends disabling non-essential background tasks to optimize processing speed.
+            </p>
+            <div className="space-y-1.5 pt-1">
+              {batteryMonitor.getPowerSavingRecommendations().map((rec) => (
+                <div key={rec.id} className="flex items-center justify-between text-[11px] bg-[#050C18] p-2 rounded-lg border border-slate-800">
+                  <div>
+                    <span className="text-slate-200 font-bold block">{rec.title}</span>
+                    <span className="text-slate-400 text-[10px]">{rec.description}</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      batteryMonitor.setPowerSavingMode(true);
+                      alert(`Successfully applied recommendation: ${rec.title}`);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-medium text-[10px] shrink-0 transition"
+                  >
+                    {rec.actionName}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            Background battery monitor is actively observing CPU load and AI processing latency. Recommendations will appear automatically if latency exceeds 2.0 seconds.
+          </p>
+        )}
       </div>
 
       {/* RAM & Memory */}

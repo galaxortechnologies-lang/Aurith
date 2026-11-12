@@ -1,4 +1,5 @@
 import { SupportedLanguage, TtsEngine, MicSoundMode, VoiceGender } from '../types';
+import { fishAudio } from './fishaudio';
 
 export interface SpeakOptions {
   language?: SupportedLanguage;
@@ -9,6 +10,7 @@ export interface SpeakOptions {
   rate?: number;
   pitch?: number;
   gender?: VoiceGender;
+  voiceProfile?: 'natural' | 'energetic' | 'calm';
 }
 
 class TtsService {
@@ -41,16 +43,19 @@ class TtsService {
    */
   public sanitizePronunciation(text: string, lang: SupportedLanguage = 'hinglish'): string {
     if (!text) return '';
-    let clean = text.replace(/[*#`_~]/g, '').trim();
+    let clean = text
+      .replace(/[\u{1F000}-\u{1FFFF}|\u{2600}-\u{27BF}|\u{1F300}-\u{1F5FF}|\u{1F600}-\u{1F64F}|\u{1F680}-\u{1F6FF}|\u{1F900}-\u{1F9FF}|\u{1FA70}-\u{1FAFF}]/gu, '')
+      .replace(/[*#`_~]/g, '')
+      .trim();
 
     // Fix letter-by-letter spelling out of AURITH
-    clean = clean.replace(/A\s*[\-\.]?\s*U\s*[\-\.]?\s*R\s*[\-\.]?\s*I\s*[\-\.]?\s*T\s*[\-\.]?\s*H/gi, 'Orith');
+    clean = clean.replace(/A\s*[\-\.]?\s*U\s*[\-\.]?\s*R\s*[\-\.]?\s*I\s*[\-\.]?\s*T\s*[\-\.]?\s*H/gi, 'aw-rith');
 
-    // Phonetic replacement for speech engines
+    // Phonetic replacement for speech engines to pronounce as "aw-rith"
     if (lang === 'hi-IN') {
-      clean = clean.replace(/\b(AURITH|Aurith|aurith)\b/g, 'ऑरिथ');
+      clean = clean.replace(/\b(AURITH|Aurith|aurith)\b/g, 'ऑ-रिथ');
     } else {
-      clean = clean.replace(/\b(AURITH|Aurith|aurith)\b/g, 'Orith');
+      clean = clean.replace(/\b(AURITH|Aurith|aurith)\b/g, 'aw-rith');
     }
 
     return clean;
@@ -73,57 +78,28 @@ class TtsService {
     const engine = options.engine || 'lifetime_free_device';
     const lang = options.language || 'hinglish';
     const gender = options.gender || 'male';
+    const voiceProfile = options.voiceProfile || 'natural';
     const cleanText = this.sanitizePronunciation(text, lang);
 
-    // 1. Try Fish Audio if selected and key provided
+    // 1. Try Fish Audio with streaming buffer pre-fetcher & voice profile if selected and key provided
     if (engine === 'fish_audio' && options.apiKey && options.apiKey.trim()) {
       try {
-        const endpoint = options.endpoint || 'https://api.fish.audio/v1/tts';
-        const modelId = options.modelId || 's2.1-pro-free';
-
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${options.apiKey.trim()}`,
-            'Content-Type': 'application/json',
-            model: modelId,
-          },
-          body: JSON.stringify({
-            text: cleanText.slice(0, 500),
-            format: 'mp3',
-          }),
-        });
-
-        if (response.ok) {
-          const blob = await response.blob();
-          if (blob.size > 0) {
-            if (this.currentAudioUrl) {
-              URL.revokeObjectURL(this.currentAudioUrl);
-            }
-            this.currentAudioUrl = URL.createObjectURL(blob);
-            const audio = new Audio(this.currentAudioUrl);
-            this.currentAudio = audio;
-
-            audio.onplay = () => this.setPlaying(true);
-            audio.onended = () => {
-              this.setPlaying(false);
-              this.currentAudio = null;
-            };
-            audio.onerror = () => {
-              this.setPlaying(false);
-              this.currentAudio = null;
-            };
-
-            await audio.play();
-            return {
-              success: true,
-              message: `Playing via Fish Audio (${modelId})`,
-              engineUsed: 'Fish Audio Cloud',
-            };
-          }
+        const result = await fishAudio.speakText(
+          options.apiKey,
+          cleanText,
+          options.modelId,
+          options.endpoint,
+          voiceProfile
+        );
+        if (result.success) {
+          return {
+            success: true,
+            message: result.message,
+            engineUsed: `Fish Audio Cloud (${voiceProfile})`,
+          };
         }
       } catch (err) {
-        console.warn('Fish Audio error, falling back to lifetime free speech:', err);
+        console.warn('Fish Audio streaming pre-fetch error, falling back to lifetime free speech:', err);
       }
     }
 
@@ -159,11 +135,11 @@ class TtsService {
     }
 
     // 3. Lifetime Free: Native Neural Web Speech API (Male Voice priority)
-    const webResult = this.speakWithWebSpeech(cleanText, lang, options.rate, options.pitch, gender);
+    const webResult = this.speakWithWebSpeech(cleanText, lang, options.rate, options.pitch, gender, voiceProfile);
     return {
       success: webResult.success,
       message: webResult.message,
-      engineUsed: `Lifetime Free Neural Engine (${gender.toUpperCase()} Voice, ₹0)`,
+      engineUsed: `Lifetime Free Neural Engine (${gender.toUpperCase()} Voice, ${voiceProfile}, ₹0)`,
     };
   }
 
@@ -172,7 +148,8 @@ class TtsService {
     lang: SupportedLanguage,
     customRate?: number,
     customPitch?: number,
-    gender: VoiceGender = 'male'
+    gender: VoiceGender = 'male',
+    voiceProfile: 'natural' | 'energetic' | 'calm' = 'natural'
   ): { success: boolean; message: string } {
     if (typeof window === 'undefined' || !window.speechSynthesis) {
       return { success: false, message: 'Web Speech Synthesis is not supported in this environment.' };
@@ -191,15 +168,18 @@ class TtsService {
         }
 
         const utterance = new SpeechSynthesisUtterance(chunks[index]);
-        utterance.rate = customRate || 1.0;
+        let baseRate = customRate || 1.0;
+        if (voiceProfile === 'energetic') baseRate *= 1.15;
+        if (voiceProfile === 'calm') baseRate *= 0.88;
+        utterance.rate = baseRate;
 
-        // Enforce deep male acoustic pitch when gender is male
+        // Enforce deep male testosterone acoustic pitch when gender is male (0.50 - 0.55)
         if (gender === 'male') {
-          utterance.pitch = customPitch ? Math.min(customPitch, 0.70) : 0.65; // Deep male frequency (0.65)
+          utterance.pitch = customPitch ? Math.min(customPitch, 0.55) : 0.50; // Deep male testosterone frequency (0.50)
         } else if (gender === 'female') {
           utterance.pitch = customPitch || 1.15;
         } else {
-          utterance.pitch = customPitch || 1.0;
+          utterance.pitch = customPitch || 0.85;
         }
 
         const targetLocale =

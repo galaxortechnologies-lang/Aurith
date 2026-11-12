@@ -13,15 +13,20 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { ttsService } from '../services/ttsService';
+import { wakeWordService } from '../services/wakeWord';
 import { callOpenRouter, callOpenRouterStream, buildSystemPrompt } from '../services/openrouter';
 import { executeDeviceAction } from '../services/deviceActions';
 import { getStoredMemories } from '../services/storage';
 import { detectVoiceAppLaunch } from '../services/appLauncher';
+import { batteryMonitor } from '../services/batteryMonitor';
+import { WaveformVisualizer } from '../components/WaveformVisualizer';
+import { friendshipLogic } from '../services/friendshipLogic';
 
 interface VoiceScreenProps {
   onNavigate: (screen: ScreenId) => void;
   settings: ApiSettings;
   onUpdateLanguage: (lang: SupportedLanguage) => void;
+  onUpdateSettings?: (settings: ApiSettings) => void;
   onRequestConfirmAction?: (details: any) => void;
 }
 
@@ -29,6 +34,7 @@ export const VoiceScreen: React.FC<VoiceScreenProps> = ({
   onNavigate,
   settings,
   onUpdateLanguage,
+  onUpdateSettings,
   onRequestConfirmAction,
 }) => {
   const [isListening, setIsListening] = useState(false);
@@ -40,15 +46,32 @@ export const VoiceScreen: React.FC<VoiceScreenProps> = ({
   const [audioPaused, setAudioPaused] = useState(false);
 
   const recognitionRef = useRef<any>(null);
+  const manualStopRef = useRef<boolean>(true);
+  const isMountedRef = useRef<boolean>(true);
+  const isProcessingRef = useRef<boolean>(false);
 
   useEffect(() => {
+    isMountedRef.current = true;
     const handleAudioState = (playing: boolean) => {
       setIsSpeaking(playing);
+      // Continuous mode: When AI finishes speaking, auto-resume mic if user hasn't manually stopped!
+      if (!playing && !manualStopRef.current && isMountedRef.current && !isProcessingRef.current) {
+        setTimeout(() => {
+          if (!manualStopRef.current && isMountedRef.current && !isProcessingRef.current) {
+            startListening();
+          }
+        }, 500);
+      }
     };
     ttsService.addListener(handleAudioState);
+    wakeWordService.pauseForManualVoice();
+
     return () => {
+      isMountedRef.current = false;
+      manualStopRef.current = true;
       ttsService.removeListener(handleAudioState);
       ttsService.stop();
+      wakeWordService.resumeAfterManualVoice();
       if (recognitionRef.current) {
         try {
           recognitionRef.current.abort();
@@ -60,7 +83,9 @@ export const VoiceScreen: React.FC<VoiceScreenProps> = ({
   }, []);
 
   const startListening = () => {
+    if (!isMountedRef.current) return;
     ttsService.stop();
+    wakeWordService.pauseForManualVoice();
     setAudioPaused(false);
     setTranscribedText('');
     setAiResponseText('');
@@ -94,7 +119,7 @@ export const VoiceScreen: React.FC<VoiceScreenProps> = ({
       recognition.onstart = () => {
         setIsListening(true);
         setStatusMessage(
-          `Listening in ${
+          `Listening continuously in ${
             settings.selectedLanguage === 'hi-IN'
               ? 'Hindi'
               : settings.selectedLanguage === 'en-IN'
@@ -126,11 +151,29 @@ export const VoiceScreen: React.FC<VoiceScreenProps> = ({
 
       recognition.onerror = (event: any) => {
         setIsListening(false);
+        if (event.error === 'aborted') {
+          // Ignore normal aborts
+          return;
+        }
         setStatusMessage(`Speech recognition: ${event.error || 'Stopped'}`);
       };
 
       recognition.onend = () => {
         setIsListening(false);
+        // Auto-restart recognition if mic was not manually stopped and AI is not speaking/processing
+        if (!manualStopRef.current && !isProcessingRef.current && !ttsService.getIsPlaying() && isMountedRef.current) {
+          setTimeout(() => {
+            if (!manualStopRef.current && !isProcessingRef.current && isMountedRef.current) {
+              try {
+                recognition.start();
+              } catch {
+                // ignore
+              }
+            }
+          }, 300);
+        } else {
+          wakeWordService.resumeAfterManualVoice();
+        }
       };
 
       recognition.start();
@@ -141,6 +184,7 @@ export const VoiceScreen: React.FC<VoiceScreenProps> = ({
   };
 
   const stopListening = () => {
+    manualStopRef.current = true;
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
@@ -149,6 +193,7 @@ export const VoiceScreen: React.FC<VoiceScreenProps> = ({
       }
     }
     setIsListening(false);
+    wakeWordService.resumeAfterManualVoice();
     setStatusMessage('Tap microphone to speak');
   };
 
@@ -163,6 +208,7 @@ export const VoiceScreen: React.FC<VoiceScreenProps> = ({
         rate: settings.speechRate,
         pitch: settings.speechPitch,
         gender: settings.voiceGender || 'male',
+        voiceProfile: settings.voiceProfile || 'natural',
       });
       setStatusMessage(`Speaking (${res.engineUsed})...`);
     } catch (err: any) {
@@ -173,7 +219,10 @@ export const VoiceScreen: React.FC<VoiceScreenProps> = ({
   const handleProcessVoiceInput = async (spokenText: string) => {
     if (!spokenText || !spokenText.trim()) return;
 
+    friendshipLogic.trackUserInteraction(spokenText);
     setIsListening(false);
+    isProcessingRef.current = true;
+    setIsProcessing(true);
 
     // 1. Instant Voice App Launch Interceptor (Hindi, English, Hinglish)
     const appMatch = detectVoiceAppLaunch(spokenText);
@@ -200,10 +249,10 @@ export const VoiceScreen: React.FC<VoiceScreenProps> = ({
 
       // Speak response using lifetime free voice engine
       await speakReply(reply);
+      isProcessingRef.current = false;
       return;
     }
 
-    setIsProcessing(true);
     const activeModelName = settings.openRouterModelId
       ? settings.openRouterModelId.split('/').pop()?.split(':')[0] || 'AI'
       : 'Gemma 4 26B';
@@ -233,6 +282,7 @@ export const VoiceScreen: React.FC<VoiceScreenProps> = ({
       ];
 
       let streamAccumulator = '';
+      const startAiTime = Date.now();
       const response = await callOpenRouterStream(
         settings.openRouterApiKey,
         messages,
@@ -244,6 +294,8 @@ export const VoiceScreen: React.FC<VoiceScreenProps> = ({
         settings.openRouterModelId,
         settings.openRouterEndpoint
       );
+      const latency = Date.now() - startAiTime;
+      batteryMonitor.reportLatency(latency);
 
       let replyToSpeak = response.content || streamAccumulator;
 
@@ -289,6 +341,8 @@ export const VoiceScreen: React.FC<VoiceScreenProps> = ({
     } catch (err: any) {
       setIsProcessing(false);
       setStatusMessage(`Error: ${err.message}`);
+    } finally {
+      isProcessingRef.current = false;
     }
   };
 
@@ -312,45 +366,77 @@ export const VoiceScreen: React.FC<VoiceScreenProps> = ({
   return (
     <div className="flex-1 flex flex-col items-center justify-between p-5 bg-[#F8FAFC] overflow-hidden select-none">
       {/* Top Bar with Language Selector */}
-      <div className="w-full flex items-center justify-between shrink-0">
-        <button
-          onClick={() => {
-            ttsService.stop();
-            onNavigate('home');
-          }}
-          className="p-2 text-slate-600 hover:text-cyan-700 rounded-lg hover:bg-slate-200 transition"
-        >
-          <ArrowLeft className="w-5 h-5" />
-        </button>
+      <div className="w-full flex flex-col items-center gap-2 shrink-0">
+        <div className="w-full flex items-center justify-between">
+          <button
+            onClick={() => {
+              ttsService.stop();
+              onNavigate('home');
+            }}
+            className="p-2 text-slate-600 hover:text-cyan-700 rounded-lg hover:bg-slate-200 transition"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
 
-        <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
-          {(['hinglish', 'hi-IN', 'en-IN'] as SupportedLanguage[]).map((lang) => (
+          <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
+            {(['hinglish', 'hi-IN', 'en-IN'] as SupportedLanguage[]).map((lang) => (
+              <button
+                key={lang}
+                onClick={() => onUpdateLanguage(lang)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-mono font-medium transition ${
+                  settings.selectedLanguage === lang
+                    ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-bold shadow-sm shadow-cyan-200'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {lang === 'hinglish' ? 'Hinglish' : lang === 'hi-IN' ? 'हिन्दी' : 'English'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* AI Voice Profile Selector (Natural, Energetic, Calm) */}
+        <div className="flex items-center gap-1 bg-white px-2.5 py-1 rounded-xl border border-slate-200 shadow-sm">
+          <span className="text-[10px] font-mono text-slate-500 font-bold uppercase mr-1">Voice:</span>
+          {(['natural', 'energetic', 'calm'] as const).map((profile) => (
             <button
-              key={lang}
-              onClick={() => onUpdateLanguage(lang)}
-              className={`px-2.5 py-1 rounded-lg text-xs font-mono font-medium transition ${
-                settings.selectedLanguage === lang
-                  ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-bold shadow-sm shadow-cyan-200'
+              key={profile}
+              onClick={() => {
+                if (onUpdateSettings) {
+                  onUpdateSettings({ ...settings, voiceProfile: profile });
+                }
+              }}
+              className={`px-2 py-0.5 rounded-lg text-[11px] font-mono font-medium transition ${
+                (settings.voiceProfile || 'natural') === profile
+                  ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-bold shadow-sm'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              {lang === 'hinglish' ? 'Hinglish' : lang === 'hi-IN' ? 'हिन्दी' : 'English'}
+              {profile === 'natural' ? '🎙️ Natural' : profile === 'energetic' ? '⚡ Energetic' : '🌿 Calm'}
             </button>
           ))}
         </div>
       </div>
 
       {/* Center AI Orb & State */}
-      <div className="flex flex-col items-center justify-center my-auto space-y-5">
+      <div className="flex flex-col items-center justify-center my-auto space-y-4">
         <AiOrb
           isListening={isListening}
           isProcessing={isProcessing}
           isSpeaking={isSpeaking}
-          size={180}
+          size={160}
         />
 
+        {/* GPU-Accelerated 60fps Real-Time Waveform Visualizer */}
+        <div className="w-[280px]">
+          <WaveformVisualizer
+            isActive={isListening || isProcessing || isSpeaking}
+            mode={isListening ? 'listening' : isProcessing ? 'processing' : isSpeaking ? 'speaking' : 'idle'}
+          />
+        </div>
+
         {/* Dynamic Status message */}
-        <div className="text-center space-y-1.5 max-w-[280px]">
+        <div className="text-center space-y-1 max-w-[280px]">
           <div className="text-xs font-bold font-mono tracking-wider text-cyan-800 flex items-center justify-center gap-1.5">
             {isListening && <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-ping mr-1" />}
             {isSpeaking && <Volume2 className="w-3.5 h-3.5 text-cyan-700 animate-pulse" />}
@@ -409,17 +495,21 @@ export const VoiceScreen: React.FC<VoiceScreenProps> = ({
           {/* Central Mic Button */}
           <button
             onClick={() => {
-              if (isListening) stopListening();
-              else startListening();
+              if (isListening || !manualStopRef.current) {
+                stopListening();
+              } else {
+                manualStopRef.current = false;
+                startListening();
+              }
             }}
             className={`p-5 rounded-full transition-all duration-300 shadow-xl cursor-pointer ${
-              isListening
+              isListening || !manualStopRef.current
                 ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-200 scale-105 animate-pulse'
                 : 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-cyan-200 hover:scale-105'
             }`}
-            title={isListening ? 'Stop listening' : 'Start speaking'}
+            title={isListening || !manualStopRef.current ? 'Stop continuous listening' : 'Start continuous listening'}
           >
-            {isListening ? <MicOff className="w-8 h-8" /> : <Mic className="w-8 h-8" />}
+            {isListening || !manualStopRef.current ? <MicOff className="w-8 h-8" /> : <Mic className="w-8 h-8" />}
           </button>
 
           {/* Pause / Resume Button */}
