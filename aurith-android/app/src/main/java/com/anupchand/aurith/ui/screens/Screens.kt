@@ -1,6 +1,11 @@
 package com.anupchand.aurith.ui.screens
 
+import android.app.ActivityManager
 import android.content.Context
+import android.content.IntentFilter
+import android.os.BatteryManager
+import android.os.Environment
+import android.os.StatFs
 import android.widget.Toast
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
